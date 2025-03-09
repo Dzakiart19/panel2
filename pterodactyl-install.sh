@@ -7,6 +7,7 @@ DB_NAME="pterodactyl"
 DB_USER="pterodactyl"
 DB_PASS=$(openssl rand -hex 12)
 ADMIN_EMAIL="admin@example.com"
+ADMIN_USER="admin"
 ADMIN_PASSWORD=$(openssl rand -hex 12)
 MYSQL_ROOT_PASSWORD="root_$(openssl rand -hex 6)"
 
@@ -39,19 +40,19 @@ apt-get install -y curl software-properties-common apt-transport-https ca-certif
     nginx mariadb-server php8.1 php8.1-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} \
     redis-server >> $LOG_FILE 2>&1
 
-# Setup MySQL
+# Setup MySQL (Revisi)
 log "🔧 Mengkonfigurasi database..."
-sudo mysql -e "SET PASSWORD FOR 'root'@'localhost' = PASSWORD('$MYSQL_ROOT_PASSWORD');"
-mysql -e "DELETE FROM mysql.user WHERE User=''" >> $LOG_FILE 2>&1
-mysql -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')" >> $LOG_FILE 2>&1
-mysql -e "FLUSH PRIVILEGES" >> $LOG_FILE 2>&1
-
-mysql -u root -p$MYSQL_ROOT_PASSWORD <<SQL
+systemctl start mariadb >> $LOG_FILE 2>&1
+mysql -uroot <<MYSQL_SCRIPT
+ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';
+DELETE FROM mysql.user WHERE User='';
+DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
+DROP DATABASE IF EXISTS test;
 CREATE DATABASE $DB_NAME;
 CREATE USER '$DB_USER'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';
-GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'127.0.0.1' WITH GRANT OPTION;
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'127.0.0.1';
 FLUSH PRIVILEGES;
-SQL
+MYSQL_SCRIPT
 
 # Instal Composer
 log "📦 Menginstal Composer..."
@@ -92,7 +93,7 @@ php artisan p:environment:database \
 php artisan migrate --seed --force >> $LOG_FILE 2>&1
 php artisan p:user:make \
   --email=$ADMIN_EMAIL \
-  --username=admin \
+  --username=$ADMIN_USER \
   --name=Administrator \
   --password=$ADMIN_PASSWORD \
   --admin=1 >> $LOG_FILE 2>&1
@@ -120,7 +121,7 @@ server {
 NGINX
 
 ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
-rm /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-enabled/default
 systemctl restart nginx >> $LOG_FILE 2>&1
 
 # Setup SSL
@@ -133,10 +134,10 @@ openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
 
 # Konfigurasi Firewall
 log "🔥 Mengatur firewall..."
-ufw allow 80
-ufw allow 443
-ufw allow 22
-ufw --force enable >> $LOG_FILE 2>&1
+ufw allow 80/tcp >> $LOG_FILE 2>&1
+ufw allow 443/tcp >> $LOG_FILE 2>&1
+ufw allow 22/tcp >> $LOG_FILE 2>&1
+echo "y" | ufw enable >> $LOG_FILE 2>&1
 
 log "✅ Instalasi berhasil diselesaikan!"
 
@@ -147,6 +148,7 @@ cat <<CREDENTIALS
           INSTALASI BERHASIL 
 =============================================
 URL Panel: https://$DOMAIN
+Username Admin: $ADMIN_USER
 Email Admin: $ADMIN_EMAIL
 Password Admin: $ADMIN_PASSWORD
 
@@ -158,14 +160,17 @@ Kredensial Database:
 
 Langkah Verifikasi:
 1. Buka URL panel di browser
-2. Login dengan kredensial admin
+2. Login dengan:
+   - Username: $ADMIN_USER
+   - Password: $ADMIN_PASSWORD
 3. Periksa status layanan:
    - systemctl status nginx
-   - systemctl status mysql
+   - systemctl status mariadb
    - systemctl status php8.1-fpm
 
 Catatan:
-- Di GitHub Codespaces, buka tab 'Ports' untuk membuka aplikasi
-- Gunakan HTTPS dan terima peringatan SSL self-signed
+- Password di-generate secara acak setiap instalasi
+- Untuk GitHub Codespaces, buka tab 'Ports' dan klik globe 🌐 icon
+- Abaikan peringatan SSL di browser
 =============================================
 CREDENTIALS
