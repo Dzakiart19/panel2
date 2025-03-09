@@ -19,38 +19,52 @@ log() {
 # Fungsi penanganan error
 error_handler() {
   log "\n❌ Error terjadi di line $1"
+  log "Cek log detail di: $LOG_FILE"
   exit 1
 }
 
 trap 'error_handler $LINENO' ERR
-set -e
+set -eo pipefail
 
 # Mulai instalasi
 clear
 log "🚀 Memulai instalasi Pterodactyl Panel..."
+log "Versi Script: 2.1 - GitHub Codespaces Optimized"
 
 # Update sistem
 log "🔄 Memperbarui paket sistem..."
 apt-get update -y >> $LOG_FILE 2>&1
-apt-get upgrade -y >> $LOG_FILE 2>&1
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -yq >> $LOG_FILE 2>&1
 
 # Instal dependensi
 log "📦 Menginstal dependensi sistem..."
-apt-get install -y curl software-properties-common apt-transport-https ca-certificates gnupg \
-    nginx mariadb-server php8.1 php8.1-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} \
-    redis-server >> $LOG_FILE 2>&1
+apt-get install -y \
+    curl \
+    software-properties-common \
+    apt-transport-https \
+    ca-certificates \
+    gnupg \
+    nginx \
+    mariadb-server \
+    php8.1 \
+    php8.1-{cli,gd,mysql,pdo,mbstring,tokenizer,bcmath,xml,fpm,curl,zip} \
+    redis-server \
+    >> $LOG_FILE 2>&1
 
 # Setup MySQL (Revisi)
 log "🔧 Mengkonfigurasi database..."
 systemctl start mariadb >> $LOG_FILE 2>&1
+systemctl enable mariadb >> $LOG_FILE 2>&1
+
+# Secure MySQL installation
 mysql -uroot <<MYSQL_SCRIPT
-ALTER USER 'root'@'localhost' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD';
+ALTER USER 'root'@'localhost' IDENTIFIED VIA mysql_native_password USING PASSWORD('$MYSQL_ROOT_PASSWORD');
 DELETE FROM mysql.user WHERE User='';
 DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1');
 DROP DATABASE IF EXISTS test;
-CREATE DATABASE $DB_NAME;
+CREATE DATABASE $DB_NAME CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER '$DB_USER'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';
-GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'127.0.0.1';
+GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'127.0.0.1' WITH GRANT OPTION;
 FLUSH PRIVILEGES;
 MYSQL_SCRIPT
 
@@ -72,30 +86,30 @@ composer install --no-dev --optimize-autoloader >> $LOG_FILE 2>&1
 
 php artisan key:generate --force >> $LOG_FILE 2>&1
 php artisan p:environment:setup \
-  --author=$ADMIN_EMAIL \
-  --url=https://$DOMAIN \
-  --timezone=Asia/Jakarta \
-  --cache=redis \
-  --session=database \
-  --queue=redis \
-  --redis-host=localhost \
-  --redis-pass=null \
-  --redis-port=6379 \
-  --settings-ui=yes >> $LOG_FILE 2>&1
+  --author="$ADMIN_EMAIL" \
+  --url="https://$DOMAIN" \
+  --timezone="Asia/Jakarta" \
+  --cache="redis" \
+  --session="database" \
+  --queue="redis" \
+  --redis-host="localhost" \
+  --redis-pass="null" \
+  --redis-port="6379" \
+  --settings-ui="yes" >> $LOG_FILE 2>&1
 
 php artisan p:environment:database \
-  --host=127.0.0.1 \
-  --port=3306 \
-  --database=$DB_NAME \
-  --username=$DB_USER \
-  --password=$DB_PASS >> $LOG_FILE 2>&1
+  --host="127.0.0.1" \
+  --port="3306" \
+  --database="$DB_NAME" \
+  --username="$DB_USER" \
+  --password="$DB_PASS" >> $LOG_FILE 2>&1
 
 php artisan migrate --seed --force >> $LOG_FILE 2>&1
 php artisan p:user:make \
-  --email=$ADMIN_EMAIL \
-  --username=$ADMIN_USER \
-  --name=Administrator \
-  --password=$ADMIN_PASSWORD \
+  --email="$ADMIN_EMAIL" \
+  --username="$ADMIN_USER" \
+  --name="Administrator" \
+  --password="$ADMIN_PASSWORD" \
   --admin=1 >> $LOG_FILE 2>&1
 
 # Setup Nginx
@@ -103,6 +117,7 @@ log "🔧 Mengkonfigurasi Nginx..."
 cat > /etc/nginx/sites-available/pterodactyl.conf <<NGINX
 server {
     listen 80;
+    listen [::]:80;
     server_name $DOMAIN;
 
     root /var/www/pterodactyl/public;
@@ -117,10 +132,14 @@ server {
         fastcgi_pass unix:/var/run/php/php8.1-fpm.sock;
         fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
     }
+
+    location ~ /\.ht {
+        deny all;
+    }
 }
 NGINX
 
-ln -s /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
+ln -sf /etc/nginx/sites-available/pterodactyl.conf /etc/nginx/sites-enabled/
 rm -f /etc/nginx/sites-enabled/default
 systemctl restart nginx >> $LOG_FILE 2>&1
 
@@ -137,7 +156,7 @@ log "🔥 Mengatur firewall..."
 ufw allow 80/tcp >> $LOG_FILE 2>&1
 ufw allow 443/tcp >> $LOG_FILE 2>&1
 ufw allow 22/tcp >> $LOG_FILE 2>&1
-echo "y" | ufw enable >> $LOG_FILE 2>&1
+yes | ufw enable >> $LOG_FILE 2>&1
 
 log "✅ Instalasi berhasil diselesaikan!"
 
@@ -148,29 +167,29 @@ cat <<CREDENTIALS
           INSTALASI BERHASIL 
 =============================================
 URL Panel: https://$DOMAIN
-Username Admin: $ADMIN_USER
-Email Admin: $ADMIN_EMAIL
-Password Admin: $ADMIN_PASSWORD
+👉 Akses Panel: Buka tab 'Ports' di Codespaces
+   Klik kanan port 80 → Open in Browser
 
-Kredensial Database:
+🔑 Kredensial Login:
+- Username: $ADMIN_USER
+- Password: $ADMIN_PASSWORD
+- Email: $ADMIN_EMAIL
+
+🔒 Kredensial Database:
 - Database: $DB_NAME
 - User: $DB_USER
 - Password: $DB_PASS
 - Root Password: $MYSQL_ROOT_PASSWORD
 
-Langkah Verifikasi:
+📌 Langkah Verifikasi:
 1. Buka URL panel di browser
-2. Login dengan:
-   - Username: $ADMIN_USER
-   - Password: $ADMIN_PASSWORD
+2. Login dengan kredensial di atas
 3. Periksa status layanan:
-   - systemctl status nginx
-   - systemctl status mariadb
-   - systemctl status php8.1-fpm
+   systemctl status {nginx,mariadb,php8.1-fpm}
 
-Catatan:
-- Password di-generate secara acak setiap instalasi
-- Untuk GitHub Codespaces, buka tab 'Ports' dan klik globe 🌐 icon
-- Abaikan peringatan SSL di browser
+❗ Catatan Penting:
+- Password di-generate secara acak
+- SSL self-signed aman untuk development
+- Port 80/443 sudah di-expose otomatis
 =============================================
 CREDENTIALS
